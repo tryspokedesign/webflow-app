@@ -1,0 +1,47 @@
+body {
+    background: white;
+}
+
+#results {
+  margin-top: 25px;
+
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+#results h2 {
+  font-size: 18px;
+}
+
+.card {
+  background: #f6caca;
+
+  padding: 15px;
+
+  border-radius: 14px;
+
+  text-align: left;
+}
+
+.card img {
+  width: 100%;
+
+  border-radius: 10px;
+
+  margin-bottom: 10px;
+}
+
+.card h3 {
+  font-size: 15px;
+
+  margin-bottom: 5px;
+
+  word-break: break-word;
+}
+
+.card p {
+  color: #ef4444;
+
+  font-size: 14px;
+}
