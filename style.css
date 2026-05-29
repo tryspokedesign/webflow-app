@@ -1,47 +1,108 @@
 body {
-    background: white;
+  background: white;
 }
-
 #results {
-  margin-top: 25px;
-
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 20px;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(1, 1fr);
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.card {
+  border: 1px solid #ddd;
+  padding: 16px;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.card img {
+  width: 100%;
+  height: 180px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #f5f5f5;
 }
 
 #results h2 {
   font-size: 18px;
 }
 
-.card {
-  background: #f6caca;
-
-  padding: 15px;
-
-  border-radius: 14px;
-
-  text-align: left;
-}
-
-.card img {
-  width: 100%;
-
-  border-radius: 10px;
-
-  margin-bottom: 10px;
-}
-
 .card h3 {
   font-size: 15px;
-
   margin-bottom: 5px;
-
   word-break: break-word;
 }
 
 .card p {
   color: #ef4444;
-
   font-size: 14px;
+}
+.cms-grid {
+  display: grid;
+  gap: 20px;
+  margin-bottom: 30px;
+}
+
+.cms-grid ul {
+  padding-left: 20px;
+  margin-top: 10px;
+}
+
+.cms-grid li {
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.field-type {
+  color: #666;
+  font-size: 12px;
+}
+
+.cms-report-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.table-wrapper {
+  background: #f1f1f1;
+  border: 1px solid #f1f1f1;
+  border-radius: 12px;
+  overflow: auto;
+  margin-top: 16px;
+}
+
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.report-table th {
+  text-align: left;
+  padding: 16px;
+  background: #f1f1f1;
+  font-size: 13px;
+  color: #000000;
+}
+
+.report-table td {
+  padding: 16px;
+  border-top: 1px solid #f1f1f1;
+  font-size: 14px;
+}
+
+.status-used {
+  color: #22c55e;
+  font-weight: 600;
+}
+
+.status-unused {
+  color: #ef4444;
+  font-weight: 600;
 }
