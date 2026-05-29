@@ -1,10 +1,27 @@
 body {
   background: white;
 }
+
+h1 {
+  font-size: 22px;
+  line-height: 28px;
+}
+
+p {
+  font-size: 14px;
+  line-height: 20px;
+}
+
 #results {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+.button-group {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
 }
 
 .card-grid {
@@ -75,7 +92,7 @@ body {
   border: 1px solid #f1f1f1;
   border-radius: 12px;
   overflow: auto;
-  margin-top: 16px;
+  margin-top: 20px;
 }
 
 .report-table {
@@ -105,4 +122,139 @@ body {
 .status-unused {
   color: #ef4444;
   font-weight: 600;
+}
+
+/* ── SEO AUDIT ── */
+
+.seo-report {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.seo-sitewide {
+  background: #f9f9f9;
+  border: 1px solid #e5e5e5;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.seo-sitewide h2 {
+  font-size: 14px;
+  margin: 0 0 10px 0;
+}
+
+.sitewide-grid {
+  display: flex;
+  gap: 16px;
+  flex-direction: column;
+}
+
+.sitewide-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.seo-report h2 {
+  font-size: 14px;
+  margin: 4px 0;
+}
+
+.seo-page-card {
+  border: 1px solid #e5e5e5;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.seo-page-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #f9f9f9;
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+
+.seo-page-name {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.seo-page-url {
+  font-size: 11px;
+  color: #888;
+}
+
+.seo-issue-count {
+  font-size: 11px;
+  background: #fee2e2;
+  color: #ef4444;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-weight: 600;
+}
+
+.seo-no-issues {
+  font-size: 11px;
+  background: #dcfce7;
+  color: #22c55e;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-weight: 600;
+}
+
+.seo-toggle {
+  font-size: 11px;
+  color: #888;
+}
+
+.seo-page-body {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.seo-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.seo-table th {
+  text-align: left;
+  padding: 8px 10px;
+  background: #f1f1f1;
+  font-size: 12px;
+}
+
+.seo-table td {
+  padding: 8px 10px;
+  border-top: 1px solid #f1f1f1;
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.seo-sub-section h4 {
+  font-size: 13px;
+  margin: 0 0 8px 0;
+}
+
+.seo-image-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.seo-image-item img {
+  width: 100%;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #f5f5f5;
+  border: 1px solid #e5e5e5;
 }
