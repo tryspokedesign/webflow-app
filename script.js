@@ -31,6 +31,7 @@ const assetAuditBtn = document.getElementById("assetAuditBtn");
 const cmsAuditBtn = document.getElementById("cmsAuditBtn");
 const generateBtn = document.getElementById("generateBtn");
 const seoAuditBtn = document.getElementById("seoAuditBtn");
+const speedAuditBtn = document.getElementById("speedAuditBtn");
 const results = document.getElementById("results");
 
 // ─────────────────────────────────────────────
@@ -455,3 +456,244 @@ function togglePage(index) {
     icon.textContent = "▼";
   }
 }
+
+// ─────────────────────────────────────────────
+// SPEED AUDIT
+// ─────────────────────────────────────────────
+
+speedAuditBtn.addEventListener("click", async () => {
+  results.innerHTML = `<p>Running Speed Audit... This may take a few minutes.</p>`;
+
+  try {
+    const response = await fetch(
+      `/speed-audit?siteShortName=${currentSiteShortName}`,
+    );
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.message || "Server error");
+    }
+
+    const data = await response.json();
+
+    function scoreColor(score) {
+      if (score >= 90) return "#22c55e";
+      if (score >= 50) return "#f97316";
+      return "#ef4444";
+    }
+
+    function scoreCircle(score) {
+      return `<span style="
+        display:inline-block;
+        width:36px;
+        height:36px;
+        border-radius:50%;
+        background:${scoreColor(score)};
+        color:white;
+        font-size:11px;
+        font-weight:700;
+        line-height:36px;
+        text-align:center;
+      ">${score}</span>`;
+    }
+
+    function cwvStatus(value, metric) {
+      return `<span style="font-size:12px;">${value}</span>`;
+    }
+
+    const sw = data.siteWide;
+
+    let html = `
+  <div class="speed-report">
+    <div class="seo-sitewide">
+      <h2>Site-wide Average</h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:10px;">
+        <div>
+          <h4 style="font-size:13px;margin:0 0 8px 0;">📱 Mobile</h4>
+          <div class="speed-circles">
+            <div class="speed-circle-item">${scoreCircle(sw.mobile.performance)}<span>Performance</span></div>
+            <div class="speed-circle-item">${scoreCircle(sw.mobile.accessibility)}<span>Accessibility</span></div>
+            <div class="speed-circle-item">${scoreCircle(sw.mobile.bestPractices)}<span>Best Practices</span></div>
+            <div class="speed-circle-item">${scoreCircle(sw.mobile.seo)}<span>SEO</span></div>
+          </div>
+        </div>
+        <div>
+          <h4 style="font-size:13px;margin:0 0 8px 0;">🖥️ Desktop</h4>
+          <div class="speed-circles">
+            <div class="speed-circle-item">${scoreCircle(sw.desktop.performance)}<span>Performance</span></div>
+            <div class="speed-circle-item">${scoreCircle(sw.desktop.accessibility)}<span>Accessibility</span></div>
+            <div class="speed-circle-item">${scoreCircle(sw.desktop.bestPractices)}<span>Best Practices</span></div>
+            <div class="speed-circle-item">${scoreCircle(sw.desktop.seo)}<span>SEO</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <h2>Pages (${data.pages.length})</h2>
+`;
+
+    data.pages.forEach((page, index) => {
+      const m = page.mobile;
+      const d = page.desktop;
+
+      if (!m && !d) return;
+
+      html += `
+        <div class="seo-page-card">
+          <div class="seo-page-header" onclick="togglePage(${index})">
+            <span class="seo-page-name">${page.pageName}</span>
+            ${m ? `<span style="font-size:11px;">📱 ${m.performance}</span>` : ""}
+            ${d ? `<span style="font-size:11px;">🖥️ ${d.performance}</span>` : ""}
+            <span class="seo-toggle" id="toggle-icon-${index}">▼</span>
+          </div>
+
+          <div class="seo-page-body" id="page-body-${index}" style="display:none;">
+
+            <div class="speed-scores-grid">
+
+              ${
+                m
+                  ? `
+                <div class="speed-device-section">
+                  <h4>📱 Mobile</h4>
+                  <div class="speed-circles">
+                    <div class="speed-circle-item">
+                      ${scoreCircle(m.performance)}
+                      <span>Performance</span>
+                    </div>
+                    <div class="speed-circle-item">
+                      ${scoreCircle(m.seo)}
+                      <span>SEO</span>
+                    </div>
+                    <div class="speed-circle-item">
+                      ${scoreCircle(m.accessibility)}
+                      <span>Accessibility</span>
+                    </div>
+                    <div class="speed-circle-item">
+                      ${scoreCircle(m.bestPractices)}
+                      <span>Best Practices</span>
+                    </div>
+                  </div>
+
+                  <table class="seo-table" style="margin-top:10px;">
+                    <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+                    <tbody>
+                      <tr><td>LCP</td><td>${m.lcp}</td></tr>
+                      <tr><td>CLS</td><td>${m.cls}</td></tr>
+                      <tr><td>FCP</td><td>${m.fcp}</td></tr>
+                      <tr><td>TTFB</td><td>${m.ttfb}</td></tr>
+                      <tr><td>TBT</td><td>${m.tbt}</td></tr>
+                    </tbody>
+                  </table>
+
+                  ${
+                    m.opportunities.length > 0
+                      ? `
+                    <div class="seo-sub-section" style="margin-top:10px;">
+                      <h4>⚠️ Opportunities to improve</h4>
+                      <table class="seo-table">
+                        <thead><tr><th>Issue</th><th>Impact</th></tr></thead>
+                        <tbody>
+                          ${m.opportunities
+                            .map(
+                              (o) => `
+                            <tr>
+                              <td>
+                                <strong>${o.title}</strong><br/>
+                                <span style="font-size:11px;color:#888;">${o.description.slice(0, 100)}...</span>
+                              </td>
+                              <td>${o.displayValue}</td>
+                            </tr>
+                          `,
+                            )
+                            .join("")}
+                        </tbody>
+                      </table>
+                    </div>
+                  `
+                      : `<p style="color:#22c55e;font-size:12px;margin-top:8px;">✅ No opportunities found</p>`
+                  }
+                </div>
+              `
+                  : ""
+              }
+
+              ${
+                d
+                  ? `
+                <div class="speed-device-section">
+                  <h4>🖥️ Desktop</h4>
+                  <div class="speed-circles">
+                    <div class="speed-circle-item">
+                      ${scoreCircle(d.performance)}
+                      <span>Performance</span>
+                    </div>
+                    <div class="speed-circle-item">
+                      ${scoreCircle(d.seo)}
+                      <span>SEO</span>
+                    </div>
+                    <div class="speed-circle-item">
+                      ${scoreCircle(d.accessibility)}
+                      <span>Accessibility</span>
+                    </div>
+                    <div class="speed-circle-item">
+                      ${scoreCircle(d.bestPractices)}
+                      <span>Best Practices</span>
+                    </div>
+                  </div>
+
+                  <table class="seo-table" style="margin-top:10px;">
+                    <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+                    <tbody>
+                      <tr><td>LCP</td><td>${d.lcp}</td></tr>
+                      <tr><td>CLS</td><td>${d.cls}</td></tr>
+                      <tr><td>FCP</td><td>${d.fcp}</td></tr>
+                      <tr><td>TTFB</td><td>${d.ttfb}</td></tr>
+                      <tr><td>TBT</td><td>${d.tbt}</td></tr>
+                    </tbody>
+                  </table>
+
+                  ${
+                    d.opportunities.length > 0
+                      ? `
+                    <div class="seo-sub-section" style="margin-top:10px;">
+                      <h4>⚠️ Opportunities to improve</h4>
+                      <table class="seo-table">
+                        <thead><tr><th>Issue</th><th>Impact</th></tr></thead>
+                        <tbody>
+                          ${d.opportunities
+                            .map(
+                              (o) => `
+                            <tr>
+                              <td>
+                                <strong>${o.title}</strong><br/>
+                                <span style="font-size:11px;color:#888;">${o.description.slice(0, 100)}...</span>
+                              </td>
+                              <td>${o.displayValue}</td>
+                            </tr>
+                          `,
+                            )
+                            .join("")}
+                        </tbody>
+                      </table>
+                    </div>
+                  `
+                      : `<p style="color:#22c55e;font-size:12px;margin-top:8px;">✅ No opportunities found</p>`
+                  }
+                </div>
+              `
+                  : ""
+              }
+
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    html += `</div>`;
+    results.innerHTML = html;
+  } catch (error) {
+    console.log(error);
+    results.innerHTML = `<p>Error running speed audit: ${error.message}</p>`;
+  }
+});

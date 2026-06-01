@@ -5,6 +5,7 @@ const cors = require("cors");
 const fs = require("fs");
 const sharp = require("sharp");
 const cheerio = require("cheerio");
+const PAGESPEED_API_KEY = "AIzaSyBUrpbbQ8Emydu_TePHJ4Erfz3cBe4W394";
 
 const app = express();
 app.use(express.json());
@@ -1304,6 +1305,234 @@ app.get("/seo-audit", async (req, res) => {
   } catch (error) {
     console.log(error.response?.data || error.message);
     res.status(500).json({ message: "Error running SEO audit" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// SPEED AUDIT
+// ─────────────────────────────────────────────
+
+app.get("/speed-audit", async (req, res) => {
+  try {
+    const { SITE_ID, ACCESS_TOKEN, SITE_URL } = getSiteConfig(req);
+
+    // FETCH ALL PAGES
+    const pagesResponse = await axios.get(
+      `https://api.webflow.com/v2/sites/${SITE_ID}/pages`,
+      {
+        headers: {
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
+          accept: "application/json",
+          "accept-version": "1.0.0",
+        },
+      },
+    );
+
+    const allPages = pagesResponse.data.pages || [];
+
+    // Remove duplicate pages caused by multiple locales
+    const seenSlugs = new Set();
+    const uniquePages = allPages.filter((page) => {
+      const key = page.slug ?? "home";
+      if (seenSlugs.has(key)) return false;
+      seenSlugs.add(key);
+      return true;
+    });
+
+   const homePage = uniquePages.filter((p) => p.slug === null || p.slug === "");
+const staticPages = uniquePages.filter((p) => p.slug !== null && p.slug !== "" && !p.collectionId);
+const templatePages = uniquePages.filter((p) => p.collectionId);
+    const pages = [...homePage, ...staticPages, ...templatePages];
+
+    const results = [];
+
+    for (const page of pages) {
+      // Skip drafts, 404, password
+      if (page.draft) continue;
+      if (page.slug === "404" || page.slug === "401") continue;
+
+      const pageUrl = `${SITE_URL}${page.publishedPath || "/"}`;
+
+      console.log(`Checking speed for: ${pageUrl}`);
+
+      const pageResult = {
+        pageName: page.title || page.slug,
+        pageUrl: page.publishedPath || "/",
+        mobile: null,
+        desktop: null,
+      };
+
+      // MOBILE + DESKTOP IN PARALLEL
+      try {
+        const [mobileRes, desktopRes] = await Promise.all([
+          axios.get(
+            `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(pageUrl)}&key=${PAGESPEED_API_KEY}&strategy=mobile&category=performance&category=seo&category=accessibility&category=best-practices`,
+          ),
+          axios.get(
+            `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(pageUrl)}&key=${PAGESPEED_API_KEY}&strategy=desktop&category=performance&category=seo&category=accessibility&category=best-practices`,
+          ),
+        ]);
+        // PARSE MOBILE
+        const mobileData = mobileRes.data;
+        const mobileCategories = mobileData.lighthouseResult?.categories || {};
+        const mobileLcp =
+          mobileData.lighthouseResult?.audits?.["largest-contentful-paint"];
+        const mobileCls =
+          mobileData.lighthouseResult?.audits?.["cumulative-layout-shift"];
+        const mobileFcp =
+          mobileData.lighthouseResult?.audits?.["first-contentful-paint"];
+        const mobileTtfb =
+          mobileData.lighthouseResult?.audits?.["server-response-time"];
+        const mobileTbt =
+          mobileData.lighthouseResult?.audits?.["total-blocking-time"];
+
+        // MOBILE OPPORTUNITIES (what's causing low score)
+        const mobileOpportunities = [];
+        const audits = mobileData.lighthouseResult?.audits || {};
+        const opportunityKeys = [
+          "render-blocking-resources",
+          "unused-css-rules",
+          "unused-javascript",
+          "uses-optimized-images",
+          "uses-webp-images",
+          "uses-text-compression",
+          "uses-responsive-images",
+          "efficient-animated-content",
+          "uses-long-cache-ttl",
+          "total-byte-weight",
+        ];
+
+        opportunityKeys.forEach((key) => {
+          const audit = audits[key];
+          if (audit && audit.score !== null && audit.score < 1) {
+            mobileOpportunities.push({
+              title: audit.title,
+              description: audit.description,
+              score: audit.score,
+              displayValue: audit.displayValue || "",
+            });
+          }
+        });
+
+        pageResult.mobile = {
+          performance: Math.round(
+            (mobileCategories.performance?.score || 0) * 100,
+          ),
+          seo: Math.round((mobileCategories.seo?.score || 0) * 100),
+          accessibility: Math.round(
+            (mobileCategories.accessibility?.score || 0) * 100,
+          ),
+          bestPractices: Math.round(
+            (mobileCategories["best-practices"]?.score || 0) * 100,
+          ),
+          lcp: mobileLcp?.displayValue || "N/A",
+          cls: mobileCls?.displayValue || "N/A",
+          fcp: mobileFcp?.displayValue || "N/A",
+          ttfb: mobileTtfb?.displayValue || "N/A",
+          tbt: mobileTbt?.displayValue || "N/A",
+          opportunities: mobileOpportunities,
+        };
+
+        // PARSE DESKTOP
+        const desktopData = desktopRes.data;
+        const desktopCategories =
+          desktopData.lighthouseResult?.categories || {};
+        const desktopLcp =
+          desktopData.lighthouseResult?.audits?.["largest-contentful-paint"];
+        const desktopCls =
+          desktopData.lighthouseResult?.audits?.["cumulative-layout-shift"];
+        const desktopFcp =
+          desktopData.lighthouseResult?.audits?.["first-contentful-paint"];
+        const desktopTtfb =
+          desktopData.lighthouseResult?.audits?.["server-response-time"];
+        const desktopTbt =
+          desktopData.lighthouseResult?.audits?.["total-blocking-time"];
+
+        const desktopOpportunities = [];
+        const desktopAudits = desktopData.lighthouseResult?.audits || {};
+        opportunityKeys.forEach((key) => {
+          const audit = desktopAudits[key];
+          if (audit && audit.score !== null && audit.score < 1) {
+            desktopOpportunities.push({
+              title: audit.title,
+              description: audit.description,
+              score: audit.score,
+              displayValue: audit.displayValue || "",
+            });
+          }
+        });
+
+        pageResult.desktop = {
+          performance: Math.round(
+            (desktopCategories.performance?.score || 0) * 100,
+          ),
+          seo: Math.round((desktopCategories.seo?.score || 0) * 100),
+          accessibility: Math.round(
+            (desktopCategories.accessibility?.score || 0) * 100,
+          ),
+          bestPractices: Math.round(
+            (desktopCategories["best-practices"]?.score || 0) * 100,
+          ),
+          lcp: desktopLcp?.displayValue || "N/A",
+          cls: desktopCls?.displayValue || "N/A",
+          fcp: desktopFcp?.displayValue || "N/A",
+          ttfb: desktopTtfb?.displayValue || "N/A",
+          tbt: desktopTbt?.displayValue || "N/A",
+          opportunities: desktopOpportunities,
+        };
+      } catch (e) {
+        console.log(`Error checking speed for ${pageUrl}:`, e.message);
+      }
+
+      results.push(pageResult);
+    }
+
+    // SITE-WIDE AVERAGE
+    const validPages = results.filter((p) => p.mobile && p.desktop);
+
+    const siteWide = {
+      mobile: {
+        performance: Math.round(
+          validPages.reduce((sum, p) => sum + p.mobile.performance, 0) /
+            (validPages.length || 1),
+        ),
+        seo: Math.round(
+          validPages.reduce((sum, p) => sum + p.mobile.seo, 0) /
+            (validPages.length || 1),
+        ),
+        accessibility: Math.round(
+          validPages.reduce((sum, p) => sum + p.mobile.accessibility, 0) /
+            (validPages.length || 1),
+        ),
+        bestPractices: Math.round(
+          validPages.reduce((sum, p) => sum + p.mobile.bestPractices, 0) /
+            (validPages.length || 1),
+        ),
+      },
+      desktop: {
+        performance: Math.round(
+          validPages.reduce((sum, p) => sum + p.desktop.performance, 0) /
+            (validPages.length || 1),
+        ),
+        seo: Math.round(
+          validPages.reduce((sum, p) => sum + p.desktop.seo, 0) /
+            (validPages.length || 1),
+        ),
+        accessibility: Math.round(
+          validPages.reduce((sum, p) => sum + p.desktop.accessibility, 0) /
+            (validPages.length || 1),
+        ),
+        bestPractices: Math.round(
+          validPages.reduce((sum, p) => sum + p.desktop.bestPractices, 0) /
+            (validPages.length || 1),
+        ),
+      },
+    };
+
+    res.json({ siteWide, pages: results });
+  } catch (error) {
+    console.log(error.response?.data || error.message);
+    res.status(500).json({ message: "Error running speed audit" });
   }
 });
 

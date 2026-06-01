@@ -218,6 +218,7 @@ p {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  overflow: auto;
 }
 
 .seo-table {
@@ -257,4 +258,43 @@ p {
   border-radius: 6px;
   background: #f5f5f5;
   border: 1px solid #e5e5e5;
+}
+
+/* ── SPEED AUDIT ── */
+
+.speed-report {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.speed-scores-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+.speed-device-section h4 {
+  font-size: 13px;
+  margin: 0 0 10px 0;
+}
+
+.speed-circles {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.seo-sitewide .speed-circles {
+  justify-content: center;
+}
+
+.speed-circle-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #666;
 }
