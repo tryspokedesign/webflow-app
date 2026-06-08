@@ -1339,9 +1339,13 @@ app.get("/speed-audit", async (req, res) => {
       return true;
     });
 
-   const homePage = uniquePages.filter((p) => p.slug === null || p.slug === "");
-const staticPages = uniquePages.filter((p) => p.slug !== null && p.slug !== "" && !p.collectionId);
-const templatePages = uniquePages.filter((p) => p.collectionId);
+    const homePage = uniquePages.filter(
+      (p) => p.slug === null || p.slug === "",
+    );
+    const staticPages = uniquePages.filter(
+      (p) => p.slug !== null && p.slug !== "" && !p.collectionId,
+    );
+    const templatePages = uniquePages.filter((p) => p.collectionId);
     const pages = [...homePage, ...staticPages, ...templatePages];
 
     const results = [];
@@ -1352,6 +1356,16 @@ const templatePages = uniquePages.filter((p) => p.collectionId);
       if (page.slug === "404" || page.slug === "401") continue;
 
       const pageUrl = `${SITE_URL}${page.publishedPath || "/"}`;
+
+      // Check if page exists before running PageSpeed
+      try {
+        const checkRes = await axios.get(pageUrl, { timeout: 5000 });
+        if (checkRes.status === 404) continue;
+      } catch (e) {
+        if (e.response?.status === 404) continue;
+        console.log(`Skipping ${pageUrl}:`, e.message);
+        continue;
+      }
 
       console.log(`Checking speed for: ${pageUrl}`);
 
