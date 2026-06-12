@@ -1,0 +1,12 @@
+{
+  "name": "Webflow SEO Audit",
+  "publicDir": "public",
+  "apiVersion": "2",
+  "telemetry": {
+    "global": {
+      "allowTelemetry": true,
+      "lastPrompted": 1780910235540,
+      "version": "2.0.0"
+    }
+  }
+}
