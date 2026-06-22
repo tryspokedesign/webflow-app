@@ -48,7 +48,8 @@ function scoreColor(score: number): string {
 // ─────────────────────────────────────────────
 
 const App: React.FC = () => {
-  const [siteShortName, setSiteShortName] = useState<string | null>(null);
+  // const [siteShortName, setSiteShortName] = useState<string | null>(null);
+  const [siteId, setSiteId] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<string>("home");
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -68,40 +69,36 @@ const App: React.FC = () => {
   });
   const [reportData, setReportData] = useState<any>(null);
 
-  // ─── GET SITE SHORT NAME VIA WEBFLOW API ───
+  // ─── GET SITE ID VIA WEBFLOW API ───
   useEffect(() => {
     async function init() {
-      // Wait for webflow to be fully ready
+      // Wait for Webflow to be fully ready
       await new Promise((resolve) => setTimeout(resolve, 500));
 
       try {
         if (typeof webflow !== "undefined") {
-          await (webflow as any).setExtensionSize({ width: 500, height: 500 });
+          await (webflow as any).setExtensionSize({
+            width: 500,
+            height: 500,
+          });
         }
       } catch (e) {
         console.warn("setExtensionSize failed", e);
       }
 
       try {
-        const site = await (webflow as any).getSite();
-        const shortName = (site as any).shortName || (site as any).id;
-        console.log("SITE:", site);
-        setSiteShortName(shortName);
+        const site = await (webflow as any).getSiteInfo();
+
+        console.log("SITE INFO:", site);
+
+        setSiteId(site.siteId);
       } catch (e) {
-        console.warn("webflow.getSite() failed, falling back to referrer");
-        const referrer = document.referrer;
-        const match = referrer.match(
-          /https?:\/\/([^.]+)\.design\.webflow\.com/,
-        );
-        if (match && match[1]) {
-          setSiteShortName(match[1]);
-        } else {
-          setError(
-            "Could not detect Webflow site. Please open inside Webflow Designer.",
-          );
-        }
+        console.error("Failed to get site info:", e);
+
+        setError("Could not detect Webflow site. Please reopen the extension.");
       }
     }
+
     init();
   }, []);
 
@@ -184,7 +181,7 @@ const App: React.FC = () => {
     setLoading("asset");
     setError(null);
     try {
-      const data = await apiFetch(`/assets?siteShortName=${siteShortName}`);
+      const data = await apiFetch(`/assets?siteId=${siteId}`);
       cacheRef.current.asset = data;
       timestampRef.current.asset = Date.now();
       setReportData(data);
@@ -218,7 +215,7 @@ const App: React.FC = () => {
         [assetId]: { text: "Saving...", color: "#888" },
       }));
       try {
-        await apiFetch(`/update-alt?siteShortName=${siteShortName}`, {
+        await apiFetch(`/update-alt?siteId=${siteId}`, {
           method: "POST",
           body: JSON.stringify({ assetId, altText }),
         });
@@ -240,27 +237,6 @@ const App: React.FC = () => {
       }
     }
 
-    async function generateAllAltText() {
-      for (const asset of missingAlt) {
-        setInputValues((prev) => ({ ...prev, [asset.id]: "Generating..." }));
-        try {
-          const data = await apiFetch("/generate-alt", {
-            method: "POST",
-            body: JSON.stringify({
-              fileName: asset.displayName,
-              imageUrl: asset.hostedUrl,
-            }),
-          });
-          setInputValues((prev) => ({ ...prev, [asset.id]: data.altText }));
-        } catch (e) {
-          setInputValues((prev) => ({
-            ...prev,
-            [asset.id]: "Error generating",
-          }));
-        }
-      }
-    }
-
     return (
       <div>
         <RefreshHeader
@@ -273,9 +249,6 @@ const App: React.FC = () => {
         />
         <h2>❌ MISSING ALT TEXT ({missingAlt.length})</h2>
         <div style={{ display: "grid", gap: "12px", margin: "12px 0px" }}>
-          <button onClick={generateAllAltText} style={{ flex: 1 }}>
-            Generate AI Alt Text
-          </button>
           <button id="saveAllBtn" onClick={saveAllAltText} style={{ flex: 1 }}>
             Save All Alt Text
           </button>
@@ -318,13 +291,130 @@ const App: React.FC = () => {
   async function runCMSAudit() {
     setLoading("cms");
     setError(null);
+
     try {
-      const data = await apiFetch(
-        `/unused-fields?siteShortName=${siteShortName}`,
+      const cmsData = await apiFetch(`/cms-audit?siteId=${siteId}`);
+
+      const fieldUsageMap: Record<string, Set<string>> = {};
+
+      for (const col of cmsData.collections) {
+        fieldUsageMap[col.id] = new Set();
+      }
+
+      const pages = await (webflow as any).getAllPagesAndFolders();
+
+      const actualPages: any[] = [];
+
+      for (const page of pages) {
+        try {
+          const utilityType = await page.getUtilityPageType();
+
+          if (utilityType !== null && utilityType !== undefined) {
+            continue;
+          }
+
+          const isPublished = await page.isPublished?.();
+          const pageType = page.type || (await page.getType?.());
+
+          if (pageType === "CollectionPage" && isPublished === false) {
+            continue;
+          }
+
+          actualPages.push(page);
+        } catch {
+          actualPages.push(page);
+        }
+      }
+
+      // console.log(`📊 Total pages: ${actualPages.length}`);
+      const homePage = actualPages.find(
+        (page: any) =>
+          page.slug === "home" || page.name?.toLowerCase() === "home",
       );
-      cacheRef.current.cms = data;
+
+      // SCAN NORMAL PAGE ELEMENTS
+      for (const page of actualPages) {
+        try {
+          await (webflow as any).switchPage(page);
+
+          await new Promise((r) => setTimeout(r, 1500));
+
+          const root = await (webflow as any).getRootElement();
+
+          if (root) {
+            await walkAndFindBindings(root, fieldUsageMap);
+          }
+        } catch {}
+      }
+
+      // SCAN COMPONENT PANEL
+      console.log("🧩 Scanning Components Panel");
+
+      const components = await (webflow as any).getAllComponents();
+
+      console.log(`🧩 Found ${components.length} components`);
+
+      for (const component of components) {
+        try {
+          console.log(`🧩 Component: ${component.name}`);
+
+          await (webflow as any).openCanvas(component);
+
+          await new Promise((r) => setTimeout(r, 1000));
+
+          const root = await (webflow as any).getRootElement();
+
+          if (root) {
+            await walkAndFindBindings(root, fieldUsageMap);
+          }
+        } catch (e) {
+          console.log(`❌ Failed component scan`, component.name, e);
+        }
+      }
+      // RETURN TO HOME PAGE
+      try {
+        if (homePage) {
+          console.log("🏠 Returning to Home page");
+
+          await (webflow as any).switchPage(homePage);
+
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      } catch (e) {
+        console.log("❌ Failed to switch to Home page", e);
+      }
+
+      const report: any[] = [];
+
+      for (const col of cmsData.collections) {
+        for (const field of col.fields) {
+          // Hide slug field
+          if (field.name?.toLowerCase() === "slug") {
+            continue;
+          }
+
+          const usedFields = fieldUsageMap[col.id] || new Set();
+
+          report.push({
+            collectionId: col.id,
+            collectionName: col.name,
+            fieldId: field.id,
+            fieldName: field.name,
+            type: field.type,
+            status: usedFields.has(field.id) ? "Used" : "Unused",
+          });
+        }
+      }
+
+      const result = {
+        report,
+        collections: cmsData.collections,
+      };
+
+      cacheRef.current.cms = result;
       timestampRef.current.cms = Date.now();
-      setReportData(data);
+
+      setReportData(result);
       setActiveView("cms");
     } catch (e: any) {
       setError(e.message);
@@ -332,8 +422,76 @@ const App: React.FC = () => {
       setLoading(null);
     }
   }
+  async function walkAndFindBindings(
+    element: any,
+    fieldUsageMap: Record<string, Set<string>>,
+  ) {
+    if (!element) return;
+
+    // Components are scanned separately
+    if (element.type === "ComponentInstance") {
+      return;
+    }
+
+    try {
+      const settings = await element.getSettings?.();
+
+      if (settings) {
+        scanForCmsBindings(settings, fieldUsageMap);
+      }
+    } catch {}
+
+    try {
+      const children = await element.getChildren?.();
+
+      if (children) {
+        for (const child of children) {
+          await walkAndFindBindings(child, fieldUsageMap);
+        }
+      }
+    } catch {}
+  }
+
+  function scanForCmsBindings(
+    obj: any,
+    fieldUsageMap: Record<string, Set<string>>,
+  ) {
+    if (!obj || typeof obj !== "object") return;
+    for (const key of Object.keys(obj)) {
+      const val = obj[key];
+      if (val && typeof val === "object") {
+        if (val.sourceType === "cms" && val.collectionId && val.fieldId) {
+          if (fieldUsageMap[val.collectionId]) {
+            fieldUsageMap[val.collectionId].add(val.fieldId);
+          }
+        }
+        if (Array.isArray(val)) {
+          for (const item of val) scanForCmsBindings(item, fieldUsageMap);
+        } else {
+          scanForCmsBindings(val, fieldUsageMap);
+        }
+      }
+    }
+  }
 
   function CMSReport({ data }: { data: any }) {
+    const [filter, setFilter] = React.useState<"all" | "used" | "unused">(
+      "all",
+    );
+
+    const filtered = data.report.filter((item: any) => {
+      if (filter === "used") return item.status === "Used";
+      if (filter === "unused") return item.status === "Unused";
+      return true;
+    });
+
+    const usedCount = data.report.filter(
+      (i: any) => i.status === "Used",
+    ).length;
+    const unusedCount = data.report.filter(
+      (i: any) => i.status === "Unused",
+    ).length;
+
     return (
       <div>
         <RefreshHeader
@@ -344,40 +502,151 @@ const App: React.FC = () => {
             runCMSAudit();
           }}
         />
-        <div className="cms-report-wrapper">
-          <div className="table-wrapper">
-            <table className="report-table">
-              <thead>
-                <tr>
-                  <th>Collection</th>
-                  <th>Field</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.report.map((item: any, i: number) => (
-                  <tr key={i}>
-                    <td>{item.collectionName}</td>
-                    <td>{item.fieldName}</td>
-                    <td>{item.type}</td>
-                    <td
+
+        {/* Summary */}
+        <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+          <div
+            style={{
+              flex: 1,
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: "8px",
+              padding: "10px",
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "20px",
+                fontWeight: 700,
+                color: "var(--success)",
+              }}
+            >
+              {usedCount}
+            </div>
+            <div style={{ fontSize: "11px", color: "var(--text-dim)" }}>
+              Used
+            </div>
+          </div>
+          <div
+            style={{
+              flex: 1,
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: "8px",
+              padding: "10px",
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "20px",
+                fontWeight: 700,
+                color: "var(--danger)",
+              }}
+            >
+              {unusedCount}
+            </div>
+            <div style={{ fontSize: "11px", color: "var(--text-dim)" }}>
+              Unused
+            </div>
+          </div>
+          <div
+            style={{
+              flex: 1,
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: "8px",
+              padding: "10px",
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "20px",
+                fontWeight: 700,
+                color: "var(--text)",
+              }}
+            >
+              {data.report.length}
+            </div>
+            <div style={{ fontSize: "11px", color: "var(--text-dim)" }}>
+              Total
+            </div>
+          </div>
+        </div>
+
+        {/* Filter tabs */}
+        <div
+          style={{
+            display: "flex",
+            gap: "4px",
+            marginBottom: "12px",
+            background: "#0f1320",
+            border: "1px solid var(--border)",
+            borderRadius: "8px",
+            padding: "3px",
+          }}
+        >
+          {(["all", "used", "unused"] as const).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              style={{
+                flex: 1,
+                padding: "6px",
+                fontSize: "11px",
+                fontWeight: 600,
+                borderRadius: "6px",
+                border: "none",
+                cursor: "pointer",
+                background:
+                  filter === f
+                    ? "linear-gradient(135deg, var(--brand), var(--brand-2))"
+                    : "transparent",
+                color: filter === f ? "#fff" : "var(--text-dim)",
+              }}
+            >
+              {f.charAt(0).toUpperCase() + f.slice(1)}
+            </button>
+          ))}
+        </div>
+
+        {/* Table */}
+        <div className="table-wrapper">
+          <table className="report-table">
+            <thead>
+              <tr>
+                <th>Collection</th>
+                <th>Field</th>
+                <th>Type</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((item: any, i: number) => (
+                <tr key={i}>
+                  <td>{item.collectionName}</td>
+                  <td>{item.fieldName}</td>
+                  <td>{item.type}</td>
+                  <td>
+                    <span
                       className={
                         item.status === "Used" ? "status-used" : "status-unused"
                       }
                     >
                       {item.status}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     );
   }
-
+  
   // ─────────────────────────────────────────────
   // SEO AUDIT
   // ─────────────────────────────────────────────
@@ -386,7 +655,7 @@ const App: React.FC = () => {
     setLoading("seo");
     setError(null);
     try {
-      const data = await apiFetch(`/seo-audit?siteShortName=${siteShortName}`);
+      const data = await apiFetch(`/seo-audit?siteId=${siteId}`);
       cacheRef.current.seo = data;
       timestampRef.current.seo = Date.now();
       setReportData(data);
@@ -663,9 +932,7 @@ const App: React.FC = () => {
     setLoading("speed");
     setError(null);
     try {
-      const data = await apiFetch(
-        `/speed-audit?siteShortName=${siteShortName}`,
-      );
+      const data = await apiFetch(`/speed-audit?siteId=${siteId}`);
       cacheRef.current.speed = data;
       timestampRef.current.speed = Date.now();
       setReportData(data);
@@ -1016,7 +1283,7 @@ const App: React.FC = () => {
   // ─────────────────────────────────────────────
 
   function handleAuditClick(type: AuditType) {
-    if (!siteShortName) {
+    if (!siteId) {
       setError(
         "Site not detected yet. Please wait or reload inside Webflow Designer.",
       );
@@ -1055,16 +1322,16 @@ const App: React.FC = () => {
         <>
           <h1>Webflow SEO App 🚀</h1>
           <p>Smart SEO & CMS optimization for Webflow websites.</p>
-          {siteShortName && (
+          {siteId && (
             <p
               style={{
                 fontSize: "12px",
                 color: "var(--text-dim)",
                 margin: "0 0 10px",
-                display: "none"
+                display: "none",
               }}
             >
-              🌐 Site: <strong>{siteShortName}</strong>
+              🌐 Site: <strong>{siteId}</strong>
             </p>
           )}
           <div className="button-group">
@@ -1074,12 +1341,12 @@ const App: React.FC = () => {
             >
               {loading === "asset" ? "Running..." : "Run Asset Audit"}
             </button>
-            <button
+            {/* <button
               disabled={!!loading}
               onClick={() => handleAuditClick("cms")}
             >
               {loading === "cms" ? "Running..." : "Run CMS Audit"}
-            </button>
+            </button> */}
             <button
               disabled={!!loading}
               onClick={() => handleAuditClick("seo")}
@@ -1090,7 +1357,7 @@ const App: React.FC = () => {
               disabled={!!loading}
               onClick={() => handleAuditClick("speed")}
             >
-              {loading === "speed" ? "Running..." : "Run Speed Audit"}
+              {loading === "speed" ? "Running..." : "Run Page Speed Audit"}
             </button>
           </div>
           {loading && (
