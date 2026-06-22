@@ -1,11 +1,37 @@
+require("dotenv").config();
 const express = require("express");
 const path = require("path");
 const axios = require("axios");
 const cors = require("cors");
 const fs = require("fs");
-const sharp = require("sharp");
 const cheerio = require("cheerio");
-const PAGESPEED_API_KEY = "AIzaSyBUrpbbQ8Emydu_TePHJ4Erfz3cBe4W394";
+const { createClient } = require("@supabase/supabase-js");
+const PAGESPEED_API_KEY = process.env.PAGESPEED_API_KEY;
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SECRET_KEY,
+);
+
+async function saveSiteToSupabase(siteData) {
+  const { error } = await supabase.from("sites").upsert(
+    {
+      site_id: siteData.siteId,
+      site_name: siteData.siteName,
+      access_token: siteData.accessToken,
+      staging_domain: siteData.stagingDomain,
+      production_domain: siteData.productionDomain,
+    },
+    {
+      onConflict: "site_id",
+    },
+  );
+
+  if (error) {
+    console.error("Supabase Save Error:", error.message);
+  } else {
+    console.log("Saved to Supabase:", siteData.siteName);
+  }
+}
 
 const app = express();
 app.use(express.json());
@@ -68,34 +94,36 @@ function saveSites(sites) {
 
 // ─────────────────────────────────────────────
 // GET SITE CONFIG
-// Reads ?siteShortName=xxx from the request
-// Matches against siteUrl in sites.json
-// e.g. siteShortName = "katemo-1151928af19843819a-e1dbee751426b"
-// siteUrl in sites.json = "https://katemo-1151928af19843819a-e1dbee751426b.webflow.io"
+// Reads ?siteId=xxx from the request
+// Matches directly against siteId in storage
+// Example:
+// siteId = "688db0f113fc35776598f452"
+// stored siteId = "688db0f113fc35776598f452"
 // ─────────────────────────────────────────────
 
-function getSiteConfig(req) {
-  const siteShortName = req.query.siteShortName;
+async function getSiteConfig(req) {
+  const siteId = req.query.siteId;
 
-  if (!siteShortName) {
-    throw new Error("Missing siteShortName query param");
+  if (!siteId) {
+    throw new Error("Missing siteId query param");
   }
 
-  const savedSites = getSavedSites();
+  const { data: currentSite, error } = await supabase
+    .from("sites")
+    .select("*")
+    .eq("site_id", siteId)
+    .single();
 
-  // Match by checking if siteUrl contains the short name
-  const currentSite = savedSites.find((site) =>
-    site.siteUrl.includes(siteShortName),
-  );
-
-  if (!currentSite) {
-    throw new Error(`Site not found for shortName: ${siteShortName}`);
+  if (error || !currentSite) {
+    throw new Error(`Site not found for siteId: ${siteId}`);
   }
 
   return {
-    SITE_ID: currentSite.siteId,
-    ACCESS_TOKEN: currentSite.accessToken,
-    SITE_URL: currentSite.siteUrl.replace(/\/$/, ""), // remove trailing slash
+    SITE_ID: currentSite.site_id,
+    ACCESS_TOKEN: currentSite.access_token,
+    SITE_NAME: currentSite.site_name,
+    STAGING_DOMAIN: currentSite.staging_domain,
+    PRODUCTION_DOMAIN: currentSite.production_domain,
   };
 }
 
@@ -120,14 +148,8 @@ app.get("/auth/callback", async (req, res) => {
 
   try {
     const params = new URLSearchParams();
-    params.append(
-      "client_id",
-      "1f554512beca1906427488975bb42fbaef338df08be984163dbf884d5ebcdc06",
-    );
-    params.append(
-      "client_secret",
-      "88e1b0a3acd70bd23a4c918e90186e625dc8a1ee64b965176ca52badb172aa6a",
-    );
+    params.append("client_id", process.env.WEBFLOW_CLIENT_ID);
+    params.append("client_secret", process.env.WEBFLOW_CLIENT_SECRET);
     params.append("code", code);
     params.append("grant_type", "authorization_code");
 
@@ -155,24 +177,46 @@ app.get("/auth/callback", async (req, res) => {
     const savedSites = getSavedSites();
 
     // LOOP AND SAVE / UPDATE
-    fetchedSites.forEach((site) => {
+    for (const site of fetchedSites) {
       const existingSite = savedSites.find((s) => s.siteId === site.id);
+
+      const siteDetailsResponse = await axios.get(
+        `https://api.webflow.com/v2/sites/${site.id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            accept: "application/json",
+          },
+        },
+      );
+      console.log(
+        "SITE DETAILS:",
+        JSON.stringify(siteDetailsResponse.data, null, 2),
+      );
+      const domains = siteDetailsResponse.data.domains || [];
+
+      console.log(
+        `Domains for ${site.displayName}:`,
+        JSON.stringify(domains, null, 2),
+      );
 
       const siteData = {
         siteId: site.id,
         siteName: site.displayName,
-        siteUrl: `https://${site.shortName}.webflow.io`,
+        stagingDomain: `${site.shortName}.webflow.io`,
+        productionDomain: null,
         accessToken,
       };
 
       if (existingSite) {
         existingSite.accessToken = accessToken;
         existingSite.siteName = site.displayName;
-        existingSite.siteUrl = `https://${site.shortName}.webflow.io`;
+        existingSite.stagingDomain = `${site.shortName}.webflow.io`;
       } else {
         savedSites.push(siteData);
       }
-    });
+      await saveSiteToSupabase(siteData);
+    }
 
     saveSites(savedSites);
 
@@ -195,7 +239,7 @@ app.get("/auth/callback", async (req, res) => {
 
 app.get("/assets", async (req, res) => {
   try {
-    const { SITE_ID, ACCESS_TOKEN } = getSiteConfig(req);
+    const { SITE_ID, ACCESS_TOKEN } = await getSiteConfig(req);
 
     const response = await axios.get(
       `https://api.webflow.com/v2/sites/${SITE_ID}/assets`,
@@ -218,62 +262,6 @@ app.get("/assets", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// GENERATE ALT TEXT (Ollama / llava)
-// ─────────────────────────────────────────────
-
-app.post("/generate-alt", async (req, res) => {
-  const { fileName, imageUrl } = req.body;
-
-  try {
-    console.log("Generating alt text for:", fileName);
-
-    let response;
-
-    // SVG — use filename only (no vision needed)
-    if (fileName.toLowerCase().endsWith(".svg")) {
-      console.log("Using SVG text mode");
-
-      response = await axios.post("http://localhost:11434/api/generate", {
-        model: "llava",
-        prompt: `Generate short SEO-friendly alt text for this SVG icon filename: ${fileName}. Keep under 8 words.`,
-        stream: false,
-      });
-    } else {
-      console.log("Using Vision AI mode");
-
-      // Download and convert image to PNG
-      const imageResponse = await axios.get(imageUrl, {
-        responseType: "arraybuffer",
-      });
-
-      const pngBuffer = await sharp(imageResponse.data)
-        .png()
-        .resize({ width: 800 })
-        .toBuffer();
-
-      const base64Image = pngBuffer.toString("base64");
-
-      response = await axios.post("http://localhost:11434/api/generate", {
-        model: "llava",
-        prompt:
-          "You are an SEO assistant. Generate short descriptive alt text for this image. Keep under 12 words.",
-        images: [base64Image],
-        stream: false,
-      });
-    }
-
-    const altText = response.data.response.replace(/"/g, "").trim();
-
-    console.log("Generated Alt Text:", altText);
-
-    res.json({ altText });
-  } catch (error) {
-    console.log(error.message);
-    res.status(500).json({ message: "Error generating alt text" });
-  }
-});
-
-// ─────────────────────────────────────────────
 // UPDATE ALT TEXT
 // ─────────────────────────────────────────────
 
@@ -281,7 +269,7 @@ app.post("/update-alt", async (req, res) => {
   const { assetId, altText } = req.body;
 
   try {
-    const { ACCESS_TOKEN } = getSiteConfig(req);
+    const { ACCESS_TOKEN } = await getSiteConfig(req);
 
     await axios.patch(
       `https://api.webflow.com/v2/assets/${assetId}`,
@@ -311,7 +299,7 @@ app.post("/update-alt", async (req, res) => {
 
 app.get("/cms", async (req, res) => {
   try {
-    const { SITE_ID, ACCESS_TOKEN } = getSiteConfig(req);
+    const { SITE_ID, ACCESS_TOKEN } = await getSiteConfig(req);
 
     const collectionsResponse = await axios.get(
       `https://api.webflow.com/v2/sites/${SITE_ID}/collections`,
@@ -369,7 +357,7 @@ app.get("/cms", async (req, res) => {
 
 app.get("/pages", async (req, res) => {
   try {
-    const { SITE_ID, ACCESS_TOKEN } = getSiteConfig(req);
+    const { SITE_ID, ACCESS_TOKEN } = await getSiteConfig(req);
 
     const response = await axios.get(
       `https://api.webflow.com/v2/sites/${SITE_ID}/pages`,
@@ -397,7 +385,7 @@ app.get("/page-dom/:pageId", async (req, res) => {
   const { pageId } = req.params;
 
   try {
-    const { ACCESS_TOKEN } = getSiteConfig(req);
+    const { ACCESS_TOKEN } = await getSiteConfig(req);
 
     const response = await axios.get(
       `https://api.webflow.com/v2/pages/${pageId}/dom`,
@@ -423,7 +411,7 @@ app.get("/page-dom/:pageId", async (req, res) => {
 
 app.get("/components", async (req, res) => {
   try {
-    const { SITE_ID, ACCESS_TOKEN } = getSiteConfig(req);
+    const { SITE_ID, ACCESS_TOKEN } = await getSiteConfig(req);
 
     const response = await axios.get(
       `https://api.webflow.com/v2/sites/${SITE_ID}/components`,
@@ -459,7 +447,7 @@ app.get("/component-dom/:componentId", async (req, res) => {
   const { componentId } = req.params;
 
   try {
-    const { ACCESS_TOKEN } = getSiteConfig(req);
+    const { ACCESS_TOKEN } = await getSiteConfig(req);
 
     const response = await axios.get(
       `https://api.webflow.com/v2/components/${componentId}/dom`,
@@ -480,14 +468,13 @@ app.get("/component-dom/:componentId", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// UNUSED CMS FIELD DETECTOR
+// CMS AUDIT DATA
 // ─────────────────────────────────────────────
 
-app.get("/unused-fields", async (req, res) => {
+app.get("/cms-audit", async (req, res) => {
   try {
-    const { SITE_ID, ACCESS_TOKEN, SITE_URL } = getSiteConfig(req);
+    const { SITE_ID, ACCESS_TOKEN } = await getSiteConfig(req);
 
-    // FETCH COLLECTIONS
     const collectionsResponse = await axios.get(
       `https://api.webflow.com/v2/sites/${SITE_ID}/collections`,
       {
@@ -496,50 +483,13 @@ app.get("/unused-fields", async (req, res) => {
           accept: "application/json",
           "accept-version": "1.0.0",
         },
-      },
+      }
     );
 
-    const collections = collectionsResponse.data.collections;
+    const collections = collectionsResponse.data.collections || [];
 
-    // FETCH PAGES
-    const pagesResponse = await axios.get(
-      `https://api.webflow.com/v2/sites/${SITE_ID}/pages`,
-      {
-        headers: {
-          Authorization: `Bearer ${ACCESS_TOKEN}`,
-          accept: "application/json",
-          "accept-version": "1.0.0",
-        },
-      },
-    );
+    const result = [];
 
-    const pages = pagesResponse.data.pages;
-
-    const report = [];
-    const referenceMap = {};
-    const pageHtmlCache = {};
-
-    // PASS 1 — BUILD GLOBAL REFERENCE MAP
-    for (const collection of collections) {
-      const itemsResponse = await axios.get(
-        `https://api.webflow.com/v2/collections/${collection.id}/items`,
-        {
-          headers: {
-            Authorization: `Bearer ${ACCESS_TOKEN}`,
-            accept: "application/json",
-            "accept-version": "1.0.0",
-          },
-        },
-      );
-
-      const items = itemsResponse.data.items || [];
-
-      items.forEach((item) => {
-        referenceMap[item.id] = item.fieldData?.name || "";
-      });
-    }
-
-    // PASS 2 — UNUSED FIELD DETECTOR
     for (const collection of collections) {
       const collectionResponse = await axios.get(
         `https://api.webflow.com/v2/collections/${collection.id}`,
@@ -549,238 +499,34 @@ app.get("/unused-fields", async (req, res) => {
             accept: "application/json",
             "accept-version": "1.0.0",
           },
-        },
+        }
       );
 
       const collectionData = collectionResponse.data;
 
-      const itemsResponse = await axios.get(
-        `https://api.webflow.com/v2/collections/${collection.id}/items`,
-        {
-          headers: {
-            Authorization: `Bearer ${ACCESS_TOKEN}`,
-            accept: "application/json",
-            "accept-version": "1.0.0",
-          },
-        },
-      );
-
-      const items = itemsResponse.data.items || [];
-
-      for (const field of collectionData.fields) {
-        // Skip system fields
-        // if (field.slug === "name" || field.slug === "slug") {
-        //   continue;
-        // }
-        // Skip system fields
-        if (field.slug === "slug") {
-          continue;
-        }
-
-        let hasAnyContent = false;
-        let isUsed = false;
-
-        for (const item of items) {
-          const value = item.fieldData?.[field.slug];
-
-          if (value === undefined || value === null || value === "") {
-            continue;
-          }
-
-          hasAnyContent = true;
-
-          let normalizedValue = "";
-
-          const fieldType = field.type;
-
-          if (
-            fieldType === "PlainText" ||
-            fieldType === "RichText" ||
-            fieldType === "Email" ||
-            fieldType === "Phone" ||
-            fieldType === "Number" ||
-            fieldType === "Option"
-          ) {
-            normalizedValue = String(value)
-              .replace(/<[^>]*>/g, "")
-              .replace(/\s+/g, " ")
-              .trim()
-              .toLowerCase();
-          } else if (fieldType === "Image") {
-            normalizedValue = value?.url?.split("?")[0].toLowerCase() || "";
-          } else if (fieldType === "Link") {
-            normalizedValue = String(value).toLowerCase();
-          } else if (fieldType === "File") {
-            normalizedValue = value?.url?.split("?")[0].toLowerCase() || "";
-          } else if (fieldType === "VideoLink") {
-            normalizedValue = String(value).toLowerCase();
-          } else if (fieldType === "MultiImage") {
-            normalizedValue = value
-              .map((img) => img.url?.split("?")[0].toLowerCase())
-              .join(" ");
-          } else if (fieldType === "Reference") {
-            normalizedValue = (referenceMap[value] || "").toLowerCase().trim();
-          } else if (fieldType === "MultiReference") {
-            normalizedValue = value
-              .map((id) => (referenceMap[id] || "").toLowerCase().trim())
-              .join(" ");
-          } else if (fieldType === "DateTime") {
-            normalizedValue = String(value).slice(0, 10).toLowerCase();
-          }
-
-          if (!normalizedValue) {
-            continue;
-          }
-
-          // CHECK STATIC PAGES
-          for (const page of pages) {
-            let html = pageHtmlCache[page.id];
-
-            if (!html) {
-              // TRY PUBLISHED PAGE — FIX: no double slash
-              const publishedPath = page.publishedPath
-                ? page.publishedPath.replace(/^\//, "")
-                : "";
-
-              try {
-                const htmlResponse = await axios.get(
-                  `${SITE_URL}/${publishedPath}`,
-                );
-
-                html = htmlResponse.data.replace(/\s+/g, " ").toLowerCase();
-              } catch (error) {
-                // FALLBACK: TRY DESIGNER DOM
-                try {
-                  const domResponse = await axios.get(
-                    `https://api.webflow.com/v2/pages/${page.id}/dom`,
-                    {
-                      headers: {
-                        Authorization: `Bearer ${ACCESS_TOKEN}`,
-                        accept: "application/json",
-                        "accept-version": "1.0.0",
-                      },
-                    },
-                  );
-
-                  html = JSON.stringify(domResponse.data.nodes || [])
-                    .replace(/\s+/g, " ")
-                    .toLowerCase();
-                } catch (domError) {
-                  continue;
-                }
-              }
-
-              pageHtmlCache[page.id] = html;
-            }
-
-            const $ = cheerio.load(html);
-            const collectionLists = $(".w-dyn-list");
-
-            for (const element of collectionLists.toArray()) {
-              const collectionText = $(element)
-                .text()
-                .replace(/\s+/g, " ")
-                .trim()
-                .toLowerCase();
-
-              let matched = false;
-
-              if (
-                fieldType === "PlainText" ||
-                fieldType === "RichText" ||
-                fieldType === "Email" ||
-                fieldType === "Phone" ||
-                fieldType === "Number" ||
-                fieldType === "Option"
-              ) {
-                matched = collectionText.includes(normalizedValue);
-              } else if (fieldType === "Image") {
-                matched = html.toLowerCase().includes(normalizedValue);
-              } else if (fieldType === "MultiImage") {
-                matched = html.toLowerCase().includes(normalizedValue);
-              } else if (fieldType === "Link") {
-                const hrefs = $("a")
-                  .map((i, el) => ($(el).attr("href") || "").toLowerCase())
-                  .get();
-                matched = hrefs.includes(normalizedValue);
-              } else if (fieldType === "File") {
-                const fileLinks = $("a")
-                  .map((i, el) =>
-                    ($(el).attr("href") || "").split("?")[0].toLowerCase(),
-                  )
-                  .get();
-                matched = fileLinks.includes(normalizedValue);
-              } else if (fieldType === "VideoLink") {
-                const iframeSources = $("iframe")
-                  .map((i, el) => ($(el).attr("src") || "").toLowerCase())
-                  .get();
-                matched = iframeSources.some((src) =>
-                  src.includes(normalizedValue),
-                );
-              } else if (fieldType === "DateTime") {
-                matched = collectionText.includes(normalizedValue.slice(0, 10));
-              } else if (fieldType === "Reference") {
-                matched = collectionText.includes(normalizedValue);
-              } else if (fieldType === "MultiReference") {
-                matched = normalizedValue
-                  .split(" ")
-                  .some((val) => collectionText.includes(val));
-              }
-
-              if (matched) {
-                console.log(`MATCH FOUND → ${field.slug}`);
-                isUsed = true;
-                break;
-              }
-            }
-
-            if (isUsed) break;
-          }
-
-          // CHECK TEMPLATE PAGE
-          if (!isUsed) {
-            const templatePage = pages.find(
-              (page) => page.collectionId === collection.id,
-            );
-
-            if (templatePage) {
-              try {
-                const templatePath = templatePage.publishedPath
-                  ? templatePage.publishedPath.replace(/^\//, "")
-                  : "";
-
-                const htmlResponse = await axios.get(
-                  `${SITE_URL}/${templatePath}`,
-                );
-
-                const html = htmlResponse.data;
-
-                if (html.toLowerCase().includes(normalizedValue)) {
-                  isUsed = true;
-                }
-              } catch (error) {
-                // Skip 404 template pages silently
-              }
-            }
-          }
-
-          if (isUsed) break;
-        }
-
-        report.push({
-          collectionName: collection.displayName,
-          fieldName: field.displayName,
+      result.push({
+        id: collectionData.id,
+        name: collectionData.displayName,
+        slug: collectionData.slug,
+        fields: (collectionData.fields || []).map((field) => ({
+          id: field.id,
+          name: field.displayName,
           slug: field.slug,
           type: field.type,
-          status: isUsed ? "Used" : "Unused",
-        });
-      }
+        })),
+      });
     }
 
-    res.json({ totalFields: report.length, report });
+    res.json({
+      totalCollections: result.length,
+      collections: result,
+    });
   } catch (error) {
-    console.log(error.response?.data || error.message);
-    res.status(500).json({ message: "Error detecting unused fields" });
+    console.error(error.response?.data || error.message);
+
+    res.status(500).json({
+      message: "Failed to load CMS audit data",
+    });
   }
 });
 
@@ -790,7 +536,12 @@ app.get("/unused-fields", async (req, res) => {
 
 app.get("/seo-audit", async (req, res) => {
   try {
-    const { SITE_ID, ACCESS_TOKEN, SITE_URL } = getSiteConfig(req);
+    const { SITE_ID, ACCESS_TOKEN, STAGING_DOMAIN, PRODUCTION_DOMAIN } =
+      await getSiteConfig(req);
+
+    const SITE_URL = PRODUCTION_DOMAIN
+      ? `https://${PRODUCTION_DOMAIN}`
+      : `https://${STAGING_DOMAIN}`;
 
     const pagesResponse = await axios.get(
       `https://api.webflow.com/v2/sites/${SITE_ID}/pages`,
@@ -1352,8 +1103,11 @@ app.get("/seo-audit", async (req, res) => {
 
 app.get("/speed-audit", async (req, res) => {
   try {
-    const { SITE_ID, ACCESS_TOKEN, SITE_URL } = getSiteConfig(req);
+    const { SITE_ID, ACCESS_TOKEN, STAGING_DOMAIN, PRODUCTION_DOMAIN } =
+      await getSiteConfig(req);
 
+    const SITE_URL = `https://${STAGING_DOMAIN}`;
+    
     // FETCH ALL PAGES
     const pagesResponse = await axios.get(
       `https://api.webflow.com/v2/sites/${SITE_ID}/pages`,
@@ -1587,6 +1341,7 @@ app.get("/speed-audit", async (req, res) => {
     res.status(500).json({ message: "Error running speed audit" });
   }
 });
+
 
 // ─────────────────────────────────────────────
 // START SERVER
